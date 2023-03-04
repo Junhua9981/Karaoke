@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<style>
+    @font-face {
+        font-family: 'GenSenRounded-B';
+        src: url("/fonts/GenSenRounded-B.ttc");
+    }
+
+    body {
+        background-color: black;
+        overflow: hidden;
+    }
+
+    #ytvid {
+        display: block;
+        /* iframes are inline by default */
+        background: #000;
+        border: none;
+        /* Reset default border */
+        height: 100vh;
+        /* Viewport-relative units */
+        width: 100vw;
+    }
+
+    #main {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        grid-template-rows: repeat(5, 1fr);
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        width: 100vw;
+        z-index: 100;
+    }
+
+    #play {
+        position: absolute;
+        z-index: 10000;
+        opacity: 50%;
+        background-color: #000;
+        color: white;
+        font-family: 'GenSenRounded-B';
+        font-size: 10vh;
+        margin: 0;
+        top: 50%;
+        left: 50%;
+        -ms-transform: translate(-50%, -50%);
+        transform: translate(-50%, -50%);
+    }
+
+    .lyrics {
+        /* grid-row: 1; */
+        display: flex;
+        font-weight: bolder;
+        font-family: 'GenSenRounded-B';
+        padding-left: 1vw;
+        padding-right: 1vw;
+    }
+
+    .short {
+
+        font-size: 6vw;
+    }
+
+    .lyrics::after {
+        will-change: width;
+    }
+
+    .long {
+        font-size: 4vw;
+    }
+
+    #lyrics_1 {
+        grid-area: 3 / 1 / 4 / 6;
+        justify-content: left;
+    }
+
+    #lyrics_2 {
+        grid-area: 4 / 1 / 5 / 6;
+        justify-content: right;
+    }
+
+    .word {
+        position: relative;
+        color: white;
+        white-space: break-spaces;
+        -webkit-text-stroke: 0.03em black;
+        /* text-shadow: 0 0 3px rgba(0,0,0,1);  */
+        width: fit-content;
+        /* height: 5vh; */
+    }
+
+    .word::after {
+        content: attr(data-text);
+        position: absolute;
+        white-space: nowrap;
+        left: 0;
+        /* top: -15%; */
+        top: 0;
+        color: blue;
+        -webkit-text-stroke: 0.03em white;
+        overflow: hidden;
+        width: 0;
+        /* text-shadow: 0 0 3px rgba(255,255,255,1);  */
+    }
+
+    @keyframes run-text {
+        from {
+            width: 0
+        }
+
+        to {
+            width: 100%
+        }
+    }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@thelevicole/youtube-to-html5-loader@5/dist/YouTubeToHtml5.js"></script>
+
+<body>
+
+    <button id="play">請點畫面就緒</button>
+    <video id="ytvid" width="100vw" height="100vh" src="" muted></video>
+
+    <div id="main">
+        <audio id="audio" crossorigin="anonymous" src=""></audio>
+        <!-- <button id="set">st</button> -->
+        <div id="lyrics_1" class="lyrics"></div>
+
+        <div id="lyrics_2" class="lyrics"></div>
+    </div>
+
+
+</body>
+<script>
+
+    let audio = document.getElementById("audio");
+    let vid = document.getElementById("ytvid");
+    let play_btn = document.getElementById("play");
+    let text = document.getElementById("text");
+    let lyrics1_div = document.getElementById("lyrics_1");
+    let lyrics2_div = document.getElementById("lyrics_2");
+    let play = false;
+    let nowlyrics = 0;
+    let nowtk = 0;
+    let lyrics = null;
+    let artist = null;
+    let ly_el = [];
+    let timeout_list = [];
+
+    let loaded = false;
+    let user_interacted = false;
+    let muted = false;
+
+    play_btn.onclick = function () {
+        console.log("play")
+        user_interacted = true
+        play_btn.style.display = "none"
+        setup_filter()
+    }
+
+    let timestamp = new Date().getTime();
+    let ws = new WebSocket('ws://127.0.0.1:8000/ws');
+    ws.onopen = function (e) {
+        console.log("Connection established!");
+        ws.send(
+            JSON.stringify({
+                'type': "waiting"
+            })
+        )
+    };
+
+    setInterval(
+        function () {
+            if (audio.duration > 0 && !audio.paused) {
+                ws.send(
+                    JSON.stringify({
+                        "type": "playing",
+                    })
+                )
+            }
+            else {
+                ws.send(
+                    JSON.stringify({
+                        "type": "waiting",
+                    })
+                )
+            }
+        }, 3000
+
+    )
+
+
+    ws.onmessage = function (e) {
+        console.log(e);
+        if (e.data == null) {
+            return
+        }
+        else if (e.data == "mute"){
+            console.log("mute")
+            updateVolume()
+            return
+        }
+        let data = JSON.parse(e.data);
+
+        if (data.lyrics != null) {
+            lyrics = data.lyrics.lyrics;
+        }
+        audio.src = data.music_url;
+        if (data.music_video_url != null) {
+            vid.src = data.music_video_url;
+        }
+        else {
+            vid.src = "";
+        }
+
+        if (data.lyrics != null && data.music_url != null) {
+            loaded = true;
+        }
+
+    };
+
+    audio.onended = function () {
+        if (loaded) {
+            init()
+            loaded = false
+        }
+        else {
+            ws.send(
+                JSON.stringify({
+                    'type': 'waiting'
+                })
+            )
+        }
+    }
+    function isLetters(str) {
+        var re = /^[A-Za-z]+$/;
+        if (str.match(re) == null)
+            return false;
+        else
+            return true;
+    }
+
+    let load_interval = setInterval(
+        function () {
+            if (loaded && user_interacted) {
+                init();
+            }
+        }, 1000
+    )
+
+    function init() {
+        clearInterval(load_interval);
+        for (let i = 0; i < timeout_list.length; i++) {
+            clearTimeout(timeout_list[i]);
+        }
+        timeout_list = [];
+        ly_el = [];
+        lyrics1_div.innerHTML = "";
+        lyrics2_div.innerHTML = "";
+
+
+
+        // set up lyrics span
+        for (let i = 0; i < lyrics.length; i++) {
+            let line_el = []
+
+            let lyrics_line = ""
+            for (let j = 0; j < lyrics[i].nodes.length; j++) {
+                lyrics_line += lyrics[i].nodes[j].text + "";
+            }
+            let too_long = lyrics_line.length > 10 || lyrics_line.length > 6 && isLetters(lyrics_line);
+
+            for (let j = 0; j < lyrics[i].nodes.length; j++) {
+
+                let newEl = document.createElement("span")
+                newEl.classList.add("word");
+                if (isLetters(lyrics[i].nodes[j].text)) {
+                    lyrics[i].nodes[j].text = lyrics[i].nodes[j].text + " ";
+                }
+                if (lyrics[i].nodes.length >= 10) {
+                    newEl.classList.add("long");
+                } else {
+                    newEl.classList.add("short");
+                }
+                newEl.dataset.text = lyrics[i].nodes[j].text;
+                newEl.innerText = lyrics[i].nodes[j].text;
+                newEl.id = "word_" + i + "_" + j;
+
+                line_el.push(newEl);
+            }
+            ly_el.push(line_el);
+        }
+
+        audio.play()
+        if (vid.src != "") {
+            vid.play()
+        }
+
+        let func_begin = Date.now()
+        console.log(func_begin)
+
+        let timeout_idx = 0;
+        timeout_idx = setTimeout(function () {
+            for (let j = 0; j < ly_el[0].length; j++) {
+                lyrics1_div.appendChild(ly_el[0][j])
+
+                lyrics1_div.children[j].animate([
+                    { width: '0%' },
+                    { width: '100%' }
+                ], {
+                    duration: lyrics[0].nodes[j].time.duration,
+                    easing: 'linear',
+                    fill: 'forwards',
+                    pseudoElement: '::after',
+                    delay: parseFloat(lyrics[0].nodes[j].time.start) - parseFloat(lyrics[0].time.start)
+                })
+            }
+        }, lyrics[0].time.start)
+        timeout_list.push(timeout_idx);
+
+        for (let i = 1; i < ly_el.length; i++) {
+            if (i % 2 == 1) {
+                timeout_idx = setTimeout(function () {
+                    lyrics2_div.innerHTML = ""
+                    for (let j = 0; j < ly_el[i].length; j++) {
+                        lyrics2_div.appendChild(ly_el[i][j])
+
+                        lyrics2_div.children[j].animate([
+                            { width: '0%' },
+                            { width: '100%' }
+                        ], {
+                            duration: lyrics[i].nodes[j].time.duration,
+                            easing: 'linear',
+                            fill: 'forwards',
+                            pseudoElement: '::after',
+                            delay: parseFloat(lyrics[i].nodes[j].time.start) - parseFloat(lyrics[i - 1].time.start)
+                        })
+                    }
+                }, lyrics[i - 1].time.start)
+                timeout_list.push(timeout_idx);
+            }
+            else {
+                timeout_idx = setTimeout(function () {
+                    lyrics1_div.innerHTML = ""
+                    for (let j = 0; j < ly_el[i].length; j++) {
+                        lyrics1_div.appendChild(ly_el[i][j])
+
+                        lyrics1_div.children[j].animate([
+                            { width: '0%' },
+                            { width: '100%' }
+                        ], {
+                            duration: lyrics[i].nodes[j].time.duration,
+                            easing: "linear",
+                            fill: 'forwards',
+                            pseudoElement: '::after',
+                            // delay: parseFloat(lyrics[i].nodes[j].time.start) - parseFloat(lyrics[i].time.start)  + parseFloat(lyrics[i-1].time.duration)
+                            delay: parseFloat(lyrics[i].nodes[j].time.start) - parseFloat(lyrics[i - 1].time.start)
+                        })
+                    }
+                }, lyrics[i - 1].time.start)
+                timeout_list.push(timeout_idx);
+            }
+        }
+
+        let func_end = Date.now();
+        console.log(func_end)
+        console.log(func_end - func_begin)
+
+    }
+
+    var context;
+    var source;
+    var splitter;
+    var left;
+    var right;
+    var leftToLeft;
+    var leftToRight;
+    var rightToLeft;
+    var rightToRight;
+    var merger;
+
+    function setup_filter () {
+
+
+        context = new AudioContext()
+
+        source = context.createMediaElementSource(audio)
+
+        splitter = context.createChannelSplitter(2)
+        source.connect(splitter)
+
+        left = context.createGain()
+        right = context.createGain()
+        splitter.connect(left, 0)
+        splitter.connect(right, 1)
+
+        leftToLeft = context.createGain()
+        leftToRight = context.createGain()
+        rightToLeft = context.createGain()
+        rightToRight = context.createGain()
+
+        left.connect(leftToLeft)
+        left.connect(leftToRight)
+        right.connect(rightToLeft)
+        right.connect(rightToRight)
+
+        
+
+
+        merger = context.createChannelMerger(2)
+        leftToLeft.connect(merger, 0, 0)
+        leftToRight.connect(merger, 0, 1)
+        rightToLeft.connect(merger, 0, 0)
+        rightToRight.connect(merger, 0, 1)
+
+        merger.connect(context.destination)
+
+
+        
+
+        updateVolume()
+
+    }
+    function setVolume(ll, lr, rl, rr) {
+        leftToLeft.gain.value = ll
+        leftToRight.gain.value = lr
+        rightToLeft.gain.value = rl
+        rightToRight.gain.value = rr
+    }
+    function updateVolume() {
+        if (muted) {
+            setVolume(1, 0, 0, 1)             // do not filter sound
+            muted = false
+        } else {
+            setVolume(0.5, 0.5, -0.5, -0.5)   // filter sound
+            muted = true
+        }
+    }
+
+
+    /*
+    fetch("lyrics_tw.json").then(function(response){
+            return response.json();
+        }).then(function(data){
+            console.log(data.lyrics)
+            console.log(data.artist)
+            lyrics = data.lyrics;
+            artist = data.artist;
+            console.log(lyrics[0])
+        })
+    play_btn.addEventListener("click", function(){
+
+        audio.play();
+        play = true;
+        vid.play();
+
+        for (let i = 0; i < lyrics.length; i++) {
+            let line_el = []
+            for (let j = 0; j < lyrics[i].nodes.length; j++) {
+                
+                let newEl = document.createElement("span")
+                newEl.classList.add("word");
+                newEl.dataset.text = lyrics[i].nodes[j].text;
+                newEl.innerText = lyrics[i].nodes[j].text;
+                newEl.id = "text"+ (i+"").padStart(2, '0') + (j+"").padStart(2, '0');
+                
+                line_el.push(
+                    newEl
+                )
+            }
+
+            ly_el.push(line_el)
+            
+        }
+
+        setTimeout(function(  ){
+            for(let j = 0;j<ly_el[0].length;j++){
+                lyrics1_div.appendChild(ly_el[0][j])
+                
+                lyrics1_div.children[j].animate([
+                    { width: '0%' },
+                    { width: '100%'}
+                ], {
+                    duration: lyrics[0].nodes[j].time.duration,
+                    easing: 'linear',
+                    fill: 'forwards',
+                    pseudoElement: '::after',
+                    delay: parseFloat(lyrics[0].nodes[j].time.start) - parseFloat(lyrics[0].time.start)
+                })
+            }
+        }, lyrics[0].time.start)
+
+        // setTimeout(function(){
+        //     lyrics1_div.innerHTML = ""
+        // }, parseFloat( lyrics[0].time.start )+ parseFloat( lyrics[0].time.duration ) ) 
+
+        for (let i = 1; i < ly_el.length; i++) {
+            
+            if ( i % 2 ==1 ){
+                setTimeout(function(  ){
+                    lyrics2_div.innerHTML = ""
+                    for(let j = 0;j<ly_el[i].length;j++){
+                        lyrics2_div.appendChild(ly_el[i][j])
+                        
+                        lyrics2_div.children[j].animate([
+                            { width: '0%' },
+                            { width: '100%'}
+                        ], {
+                            duration: lyrics[i].nodes[j].time.duration,
+                            easing: 'linear',
+                            fill: 'forwards',
+                            pseudoElement: '::after',
+                            delay: parseFloat(lyrics[i].nodes[j].time.start) - parseFloat(lyrics[i].time.start) + parseFloat(lyrics[i-1].time.duration)
+                        })
+                    }
+                }, lyrics[i-1].time.start)
+
+            }
+            else{
+                setTimeout(function(  ){
+                    lyrics1_div.innerHTML = ""
+                    for(let j = 0;j<ly_el[i].length;j++){
+                        lyrics1_div.appendChild(ly_el[i][j])
+                        
+                        lyrics1_div.children[j].animate([
+                            { width: '0%'},
+                            { width: '100%'}
+                        ], {
+                            duration: lyrics[i].nodes[j].time.duration,
+                            easing: "linear",
+                            fill: 'forwards',
+                            pseudoElement: '::after',
+                            delay: parseFloat(lyrics[i].nodes[j].time.start) - parseFloat(lyrics[i].time.start)  + parseFloat(lyrics[i-1].time.duration)
+                        })
+                    }
+                }, lyrics[i-1].time.start)
+
+            }
+
+        }
+
+    })
+
+    var lyrics_tk = null;
+    */
+</script>
+
+</html>
